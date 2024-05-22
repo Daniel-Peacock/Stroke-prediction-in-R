@@ -1,0 +1,268 @@
+---
+title: "Stoke prediction R"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-05-08"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(repos = "https://cran.uk.r-project.org")
+install.packages("tidyverse")
+library(tidyverse)
+install.packages("rio")
+library(rio)
+install.packages("cluster")
+library(cluster) 
+install.packages("vegan")
+library(vegan)
+install.packages("mclust")
+library(mclust)
+install.packages("devtools")
+library(devtools)
+install_github("vqv/ggbiplot")
+library(ggbiplot)
+install.packages("ggplot2")
+library(ggplot2)
+
+
+```
+#Preparing data
+## Preparing data. This section is about prepraring data for analysis and involves in removing any outliers and also converting serveral variables into factor variable type, this will make linear/logistic regresion analysis easier as having the variables as dummy variables are easier to analyse. Furthermore, to make sure the data is accurate and useful when looking at variables that predict stroke we have removed all entries with age less than 18 from the data as they will skew the results and we want to investigate the effects on adults only.
+```{r}
+#Importing data
+Data <- read.csv("Stroke data.csv", TRUE)
+#Mutating the variables to numeric or factor variable type
+Data <- Data %>% mutate(age = as.numeric(age),
+                        gender = as.factor(gender),
+                        hypertension = as.numeric(hypertension),
+                        heart_disease = as.numeric(heart_disease),
+                        ever_married = as.factor(ever_married),
+                        work_type = as.factor(work_type),
+                        Residence_type = as.factor(Residence_type),
+                        avg_glucose_level = as.numeric(avg_glucose_level),
+                        bmi = as.numeric(bmi),
+                        smoking_status = as.factor(smoking_status),
+                        stroke = as.numeric(stroke))
+#Removing "Never_worked" and "children" from the data set as they represent too small of a portion of the data and are likely to skew the data. Also removed "other" from gender for the same reason.
+Data <- Data %>%
+  mutate(gender = na_if(gender, "Other")) %>%
+  mutate(work_type = na_if(work_type, "Never_worked")) %>%
+  mutate(work_type = na_if(work_type, "children")) %>%
+  drop_na(c(gender, work_type))
+#removing children (under 18s) from the data
+Data <- Data %>% filter(age > 18)
+#removing missing levels so they don't appear on charts and tables later. 
+Data <- drop_na(Data)
+Data$gender <- droplevels(Data$gender)
+Data$work_type <- droplevels(Data$work_type)
+
+view(Data)
+```
+
+##Creating visualisations to understand the data. 
+```{r}
+#This will create a bar chart showing the distribution of data across the work types. 
+## Type of work bar chart
+worktypebarchart <- ggplot(data = Data, aes(x = factor(work_type)))+
+  geom_bar(fill = "White", color = "black", linewidth = 0.5) +
+  geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -0.3, size = 3.5)+
+  labs(title = "Type of Job Worked", x = "Job type", y = "Frequancy", subtitle = "bar chart")+
+  scale_color_discrete(name = "Work Type") +
+  theme_minimal()
+worktypebarchart
+#From this we can see the majority of the data is on Private sector jobs (2630). We can also see the rough proportions of the data such as how its split roughly 50% private jobs, 25% Government jobs and self-employed.
+```
+
+# Smoking frequency
+```{r}
+#Now we can look at how the smoking frequency is distributed in our data.
+##bar chart of smoking frequency
+smokingbarchart <- ggplot(data = Data, aes(x = factor(smoking_status)))+
+  geom_bar(fill = "White", color = "black", size = 0.5) +
+  geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -0.3, size = 3.5)+
+  labs(title = "Smoking status", x = "smoking status", y = "Frequancy", subtitle = "bar chart")+
+  scale_color_discrete(name = "Smoking status") +
+  theme_minimal()
+smokingbarchart
+```
+
+
+# Stroke frequency
+```{r}
+#Similarly, we will look at stroke frequency.
+##bar chart of stroke frequency
+strokebarchart <- ggplot(data = Data, aes(x = factor(stroke)))+
+  geom_bar(fill = "White", color = "black", size = 0.5) +
+  geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -0.3, size = 3.5)+
+  labs(title = "Stroke", x = "Stroke", y = "Frequancy", subtitle = "bar chart")+
+  scale_color_discrete(name = "stroke") +
+  theme_minimal()
+strokebarchart
+
+
+```
+
+# Summary statistics
+```{r}
+
+#Now we can construct a table showing the mean, median, min and max of all our numerical data. 
+#summary of a all numerical variables (age, bmi, average gluvose level).
+summary_x <- summary(Data$age)
+summary_y <- summary(Data$bmi)
+summary_z <- summary(Data$avg_glucose_level)
+## Creating the table.
+summary_table <- data.frame(
+  Variable = c("age", "bmi", "avg_glucose_level"),
+  Minimum = c(summary_x[1], summary_y[1], summary_z[1]),
+  Median = c(summary_x[3], summary_y[3], summary_z[3]),
+  Mean = c(summary_x[4], summary_y[4], summary_z[4]),
+  Maximum = c(summary_x[6], summary_y[6], summary_z[6]))
+print(summary_table)
+#This table is really useful because we can see the exact values of various points of interest in our data. For example, one of the most important pieces of data is the mean and median of the age. These will tell us where the rough midpoint of our data is. These summaries help us understand what age demographic our data is based on. 
+```
+
+# Age distribution
+```{r}
+## Although the table is helpful, we want to look at how the data is distributed through a visual. Something that we can look at and deduce whether the data is normally distributed or not. 
+ggplot(Data, aes(x = age)) +
+  geom_histogram(binwidth = 3, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Age Distribution", x = "Age", y = "Frequency") +
+  theme_minimal()
+## This histogram exactly shows us how age is distributed. We can see that there is a slight drop after age 60 and a subsequent rise in frequency of data at 75+. This shouldn't impact or logistic model 
+
+```
+
+# Age and BMI correlation line plot
+```{r}
+# Plotting age against bmi to see if there is a correlation.
+##age against bmi ggplot
+age_bmi <- ggplot(Data, aes(x = age, y = bmi)) +
+  geom_point(size = 0.5, shape = 23, alpha = 0.5) +
+  geom_smooth(method = "lm") ##add regression line
+age_bmi
+#No correlation found
+
+```
+
+# Gender, Bmi boxplot
+```{r}
+#plotting the bmi of female versus male participants.
+work_bmi <- ggplot(Data, aes(gender, avg_glucose_level))
+work_bmi + geom_boxplot(varwidth=T, fill="plum") + 
+    labs(title="Box plot", ##labels
+         subtitle="gender and bmi",
+         caption="",
+         x="gender",
+         y="bmi")
+#This plot shows us that the average male has a slightly higher bmi and the upper quartile limit for males is higher then females. 
+```
+
+# Smoking and stoke relationship. Stoke and non-stroke patients breakdown by porportion of smokers, non-smokers ect.
+```{r}
+# Plotting the proportion of stroke by smoking status
+smoking_stroke <- ggplot(Data, aes(x = stroke, fill = smoking_status)) +
+  geom_bar(position = "fill", width = 0.5) +
+  labs(x = "stroke", y = "Proportion") +
+  scale_fill_discrete(name = "Smoking Status")
+smoking_stroke
+#This is interesting because we can see that smoking and formerly smoking increases the proportion of patients with stroke but we also see the unknown section is greatest in the population that doesn't have stroke. This helps us understand that although we don't know what unknown consists of it most likely consists of non-smokers.
+```
+
+# Stroke proportion within the type of work category.
+```{r}
+#setting up count variables
+counts1 <- table(Data$work_type, Data$stroke)
+counts2 <- as.data.frame.matrix(counts1)
+stroke_work <- counts2 %>%
+  rownames_to_column(var = "work_type") %>%
+  gather(key = "stroke", value = "value", -work_type)
+#plotting stroke rates for the different kinds of work
+stroke_work_plot <- ggplot(stroke_work, aes(x = work_type, y = value, fill = stroke)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = value), vjust = -0.5, hjust = 0, color = "black", size = 3) +
+  labs(x = "Work Type", y = "Count") +
+  scale_fill_manual(values = c("grey", "orange"), labels = c("No Stroke", "Stroke"))
+stroke_work_plot
+
+# This bar chart shows the amount of people within the categorical sets from work_type and how many of them have had a stroke. With his we can visually see and using the numbers calculate the proportion of stoke within each industry of work to see if any is worse off or better off than another.
+
+```
+
+# Jiter plot showing the relationship between age, smoking status and stoke.
+```{r}
+ggplot(Data, aes(x = smoking_status, y = age, color = as.factor(stroke))) +
+  geom_jitter(width = .2)
+#This simple jitter plot elegantly shows us how three variables all interact with each other, in this case, age, smoking status and stroke are all depicted. We can see firstly by the higher proportion of blue dots (representing stoke) near the top of all of the smoking categories. This shows us that with higher age patients are more likely to suffer from stokes. Next from the proportion of blue dots within a section of the smoking category we can see what effect smoking versus not smoking has on stroke rates. This is my favorite plot because it shows us the effects of two very key independent variables on our dependent variable of stroke in an intuitive, visual way. This graph can be easily understood by anyone looking at it, making it perfect for communicating results to someone without a good understanding of data analysis. 
+```
+
+
+# Here we will construct two linear models both looking at factors that affect bmi of patients.
+
+```{r}
+#First model
+linmod4<-glm(bmi~age+avg_glucose_level+smoking_status+Residence_type,family=gaussian(link = "identity"),data=Data)
+linmod4
+summary(linmod4)
+#here is our first attempt at fitting a model which was constructed based off the various plots we made previously. We can see a lot of results but all we are interested in for now is if the variables are statistically significant and AIC score which means nothing on its own but can be used to compare our current model with the model we make next and see if its an improvement. So from our results we can see only the intercept and average glucose level are significant. So we will remove all other variables, add heart disease and gender then check if this improves the AIC score and whether we have two significant variables. 
+
+linmod4.1<-glm(bmi~avg_glucose_level+heart_disease+gender,family=gaussian(link = "identity"),data=Data)
+linmod4.1
+summary(linmod4.1)
+#From this result we can see we have two significant variables: Average glucose level and Heart disease. These two variables are statistically relevant for explaining variation in our dependent variable (bmi) by variation in average glucose levels and heart disease. Moreover, we can see that increasing average glucose level by 1 will increase a persons bmi by 0.02 while someone who suffers from heart disease, when compared to someone who does not, will have a bmi that is 0.976 less. Moreover, the AIC of this model Versus the previous model is 27147 versus 27150 which is slightly lower and lower is better. This means compared to our previous model this model fits the data better.
+
+#Now that we have fitted our first model we can try fit a second model with different variables to try explain the variation of bmi. First, based off the plots previously and also selecting variables we would like to investigate we can create a preliminary model as before. This model will investigate hypertension, marital status, type of work and whether the patient has had a stroke.
+linmod5<-glm(bmi~+hypertension+ever_married+work_type+stroke, family = gaussian(link = "identity"),data = Data)
+linmod5
+summary(linmod5)
+
+#Similarly to before, we are still just trying to fit a model so all we are going to look at is what variables are statistically relevant and remove the others, then re-estimate and compare score.
+linmod5.1<-glm(bmi~+hypertension+ever_married, family = gaussian(link = "identity"),data = Data)
+linmod5.1
+summary(linmod5.1)
+# Now we are left with our model that only has a few statistically relevant variables that also has lower AIC score (27162 versus 27163). This model can be interpreted as such, having been married previously in ones life increases bmi by 1.57 and suffering from hypertension increased bmi by 2.51. However, although I say increase, one limitation of linear regression analysis is sometimes the direction of the relationship is unclear or unhelpful. So here it is actually unhelpful to say hypertension increased bmi when it is more likely that high bmi causes hypertension and the direction of the relationship is that of bmi impacting hypertension. This is an important distinction because knowing the direction of the relationship means we can avoid making mistakes such as telling patients to reduce hypertension with the goal of reducing bmi when in reality they should try and reduce their bmi through other methods/techniques and as a result they may find their hypertension goes away. This can be clearly seen when we think about whether giving someone medication that reduces hypertension would reduce bmi. It does not.
+
+#Finally, now that we are left with two final models which explain bmi with different variables we can compare them side by side. Firstly we can look at AIC score, model 4.1 versus model 5.1 : 27147 versus 27162. So we can see model 4.1 which used average glucose levels and heart disease better fits the data then model 5.1 which uses whether someone has been married and hypertension to explain bmi. Overall from these models we can learn a few key points. Firstly that the type of job you have; where you live; whether you smoke or not all dont seem to impact bmi. Secondly, we can learn that average glucose level is significant in determining bmi and that increasing average glucose level by 1 increases bmi by 0.02. Thirdly, because hypertension and heart disease are statistically significant we know there is a relationship there and because of background knowledge and research we can justify that bmi impacts heart disease and hypertension. Overall from this analysis we can see that patients who want to reduce bmi should focus on reducing average glucose levels and as a result would see their heart disease and hypertension reduce, which is a very helpful finding in combating heart disease and hypertension.
+```
+
+
+# here we will will construct logistical models to try and predict factors impacting whether patients have had a stroke based on the variables in the data set.
+```{r}
+#converting Residence to a dummy variable
+Data <- Data %>% mutate(Residence_type = recode(Residence_type, 'Urban' = "1",                                 'Rural' = "0"))
+#Making the first model based on the numerical variables, age, bmi and categorical variable, residence type.
+linmod1<-glm(stroke~age+bmi+avg_glucose_level+Residence_type,family=binomial(link = "logit"),data=Data)
+linmod1
+summary(linmod1)
+#This initial model has a two statistically significant variables which we will carry on into the next model while dropping the two non-statistically significant variables. Moreover we can take a note of the AIC score "1382.2". Also because this is a logistical model the coefficients from "summary" are not accurate and we cannot gather any information from it, although the sign of the coefficient tends to be right. We will explore this more in our final model
+
+#here is our next model with the changes implemented 
+linmod1.1<-glm(stroke~age+avg_glucose_level,family=binomial(link = "logit"),data=Data)
+linmod1.1
+summary(linmod1.1)
+#This model has better AIC score (1378.3 versus 1382.2) and also only has statistically significant variables. I'm happy with this model so now we can take a look at the coefficients using "linmod1$coefficients" and "exp(linmod1$coefficients)". Note that we are dealing with probabilities and odds here because logistic models work based of a sigmoid curve and predict portability of a variable swiching the patient from non-stroke to stroke.
+linmod1.1$coefficients 
+exp(linmod1.1$coefficients)#coefficients for multiplying odds
+#From these coefficients we can see that every additional year of age multiplies the odds of stroke by 1.074 and an increase in average glucose level multiplies the odds of stroke by 1.0058
+#This will be our final fitted model 1.1% and shows us how age and average glucose level impact stoke outcomes in patients.
+
+#Next, we will try create a different model for stoke prediction  based on other variables in the data set. More specifically, we will look at other negative health outcomes and see if they increase the chance of stroke.
+
+#setting never smoked as the base category to make interpreting easier later on.
+Data$smoking_status <- relevel(Data$smoking_status, ref = "never smoked")
+
+#Our first attempt to fit a model will look at the variables heart disease, hypertension and smoking status. All of these variable could be described as negative health outcomes.
+linmod3<-glm(stroke~heart_disease+hypertension+smoking_status,family=binomial(link = "logit"),data=Data)
+linmod3
+summary(linmod3)
+#Similar to before, our only goal here is to look for statistically significant variables to help us fit the best possible model before we can look at the coefficients. From this we will note down the AIC score of "1556.6"
+linmod3.1<-glm(stroke~heart_disease+hypertension,family=binomial(link = "logit"),data=Data)
+linmod3.1
+summary(linmod3.1)
+#This will be our final model as it has a lower AIC score of "1555.5" and only contains statistically significant variables.Now we will interpret the variables.
+linmod3.1$coefficients
+exp(linmod3.1$coefficients)#multiplying odds coefficient
+#These coefficients show us that having heart disease and hypertension increase the patients odds of stroke by 3.59x and 3.14x respectively
+
+#Between model 1.1 AIC score (1378.3) and model 3.1 AIC score(1555.5) our first model based off age and glucose levels is a better fit of the data. This means that the variation in variables in model 1.1 (age and average glucose levels) better explain the variation in stroke in patients when compared to the variation in variables in model 3.1 (heart disease and hypertension). Although we can gather key insights from both models, namely that increases in age and average glucose levels (model 1.1) will increase the change of stroke so older patients with bad diet choices are more at risk and should look into intervention. Likewise, patients with pre-existing conditions like heart disease and hypertension are also more at risk and should take precautions. 
+```
